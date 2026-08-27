@@ -783,44 +783,116 @@
     return {label:'High risk', bg:'#DD8E8E', fg:'#16231F'};
   }
 
-  function update(){
-    const a = +att.value, q = +quiz.value, c = +comp.value, e = +eng.value;
+async function update(){
+    const a = +att.value;
+    const q = +quiz.value;
+    const c = +comp.value;
+    const e = +eng.value;
+
     vAtt.textContent = a + '%';
     vQuiz.textContent = q + '%';
     vComp.textContent = c + '%';
     vEng.textContent = e + '%';
 
-    const predicted = a*0.30 + q*0.35 + c*0.20 + e*0.15;
-    const current = q*0.55 + c*0.45; // "where the gradebook stands today"
+    try {
+      const response = await fetch('/predict', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          attendance: a,
+          quizScore: q,
+          assignmentCompletion: c,
+          engagementScore: e
+        })
+      });
 
-    // history: 6 points trending toward current, x from 10 to 215
-    const histPts = [];
-    for(let i=0;i<6;i++){
-      const t = i/5;
-      const x = 10 + t*205;
-      const s = current - (1-t)*8 + noise(i);
-      histPts.push([x, scoreToY(Math.max(0,Math.min(100,s)))]);
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Prediction failed');
+      }
+
+      const predicted = Number(data.estimatedGrade);
+      const current = q * 0.55 + c * 0.45;
+
+      // Keep the existing graph behavior
+      const histPts = [];
+      for(let i=0;i<6;i++){
+        const t = i/5;
+        const x = 10 + t*205;
+        const s = current - (1-t)*8 + noise(i);
+        histPts.push([x, scoreToY(Math.max(0,Math.min(100,s)))]);
+      }
+
+      const projPts = [];
+      for(let i=0;i<6;i++){
+        const t = i/5;
+        const x = 215 + t*255;
+        const s = current + (predicted-current)*t + noise(i+9)*0.4;
+        projPts.push([x, scoreToY(Math.max(0,Math.min(100,s)))]);
+      }
+
+      histPath.setAttribute('d', pathFromPoints(histPts));
+      projPath.setAttribute('d', pathFromPoints(projPts));
+
+      const last = projPts[projPts.length-1];
+      dot.setAttribute('cx', last[0]);
+      dot.setAttribute('cy', last[1]);
+
+      numberEl.textContent = Math.round(predicted);
+
+      let b;
+      if(data.performance === 'High'){
+        b = {label:'On track', bg:'#A6CCA9', fg:'#16231F'};
+      }else if(data.performance === 'Medium'){
+        b = {label:'Watch', bg:'#86B7CE', fg:'#16231F'};
+      }else{
+        b = {label:'At risk', bg:'#E7C15C', fg:'#16231F'};
+      }
+
+      badgeEl.textContent = b.label;
+      badgeEl.style.background = b.bg;
+      badgeEl.style.color = b.fg;
+
+    }catch(error){
+      console.error('Prediction error:', error);
+
+      // Keep the UI alive even if the backend is temporarily unavailable
+      const predicted = a*0.30 + q*0.35 + c*0.20 + e*0.15;
+      const current = q*0.55 + c*0.45;
+
+      const histPts = [];
+      for(let i=0;i<6;i++){
+        const t = i/5;
+        const x = 10 + t*205;
+        const s = current - (1-t)*8 + noise(i);
+        histPts.push([x, scoreToY(Math.max(0,Math.min(100,s)))]);
+      }
+
+      const projPts = [];
+      for(let i=0;i<6;i++){
+        const t = i/5;
+        const x = 215 + t*255;
+        const s = current + (predicted-current)*t + noise(i+9)*0.4;
+        projPts.push([x, scoreToY(Math.max(0,Math.min(100,s)))]);
+      }
+
+      histPath.setAttribute('d', pathFromPoints(histPts));
+      projPath.setAttribute('d', pathFromPoints(projPts));
+
+      const last = projPts[projPts.length-1];
+      dot.setAttribute('cx', last[0]);
+      dot.setAttribute('cy', last[1]);
+
+      numberEl.textContent = Math.round(predicted);
+
+      const b = badgeStyle(predicted);
+      badgeEl.textContent = b.label;
+      badgeEl.style.background = b.bg;
+      badgeEl.style.color = b.fg;
     }
-    // projection: 6 points from current to predicted, x from 215 to 470
-    const projPts = [];
-    for(let i=0;i<6;i++){
-      const t = i/5;
-      const x = 215 + t*255;
-      const s = current + (predicted-current)*t + noise(i+9)*0.4;
-      projPts.push([x, scoreToY(Math.max(0,Math.min(100,s)))]);
-    }
-
-    histPath.setAttribute('d', pathFromPoints(histPts));
-    projPath.setAttribute('d', pathFromPoints(projPts));
-    const last = projPts[projPts.length-1];
-    dot.setAttribute('cx', last[0]);
-    dot.setAttribute('cy', last[1]);
-
-    numberEl.textContent = Math.round(predicted);
-    const b = badgeStyle(predicted);
-    badgeEl.textContent = b.label;
-    badgeEl.style.background = b.bg;
-    badgeEl.style.color = b.fg;
   }
 
   [att,quiz,comp,eng].forEach(s => s.addEventListener('input', update));
