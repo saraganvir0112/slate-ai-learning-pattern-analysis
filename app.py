@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory
 import joblib
 import os
-import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 
@@ -10,7 +9,8 @@ MODEL_PATH = os.path.join(BASE_DIR, "model", "student_model.pkl")
 DATA_PATH = os.path.join(BASE_DIR, "dataset", "student_data.csv")
 
 model_data = joblib.load(MODEL_PATH)
-weekly_data = pd.read_csv(DATA_PATH)
+weekly_data = pd.read_csv(DATA_PATH, sep=None, engine="python")
+weekly_data.columns = weekly_data.columns.str.strip()
 
 model = model_data["model"]
 scaler = model_data["scaler"]
@@ -25,6 +25,7 @@ app = Flask(__name__)
 
 def get_trajectory_pattern(student_df):
     ordered = student_df.sort_values("Week")
+
     scores = (
         ordered["Attendance"] * 0.30
         + ordered["QuizScore"] * 0.35
@@ -39,16 +40,13 @@ def get_trajectory_pattern(student_df):
 
     midpoint = len(scores) // 2
 
-    early_x = weeks[:midpoint]
-    late_x = weeks[midpoint:]
-
     early_slope = LinearRegression().fit(
-        early_x,
+        weeks[:midpoint],
         scores[:midpoint]
     ).coef_[0]
 
     late_slope = LinearRegression().fit(
-        late_x,
+        weeks[midpoint:],
         scores[midpoint:]
     ).coef_[0]
 
@@ -82,6 +80,16 @@ def get_trajectory_pattern(student_df):
         return "At-risk decliner"
 
     return "Plateaued"
+
+
+def get_risk(predicted):
+    if predicted >= 85:
+        return "On track"
+    if predicted >= 70:
+        return "Watch"
+    if predicted >= 55:
+        return "At risk"
+    return "High risk"
 
 
 @app.route("/")
@@ -128,7 +136,7 @@ def predict():
         probabilities = model.predict_proba(input_scaled)[0]
         confidence = float(probabilities.max() * 100)
 
-        cluster_number = int(kmeans.predict(input_scaled)[0])
+        cluster_number = int(kmeans.predict(input_scaled)[0]) + 1
 
         estimated_grade = (
             attendance * 0.30
@@ -154,7 +162,7 @@ def predict():
             "performance": performance,
             "estimatedGrade": estimated_grade,
             "riskLevel": risk_level,
-            "cluster": cluster_number + 1,
+            "cluster": cluster_number,
             "confidence": round(confidence, 2),
             "timeOnTask": time_on_task,
             "model": model_name,
@@ -205,15 +213,7 @@ def students():
                 + latest["EngagementScore"] * 0.15
             ))
 
-            if predicted >= 85:
-                risk = "On track"
-            elif predicted >= 70:
-                risk = "Watch"
-            elif predicted >= 55:
-                risk = "At risk"
-            else:
-                risk = "High risk"
-
+            risk = get_risk(predicted)
             pattern = get_trajectory_pattern(ordered)
 
             trend = (
